@@ -96,34 +96,36 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
     # Strip common prefixes
     cleaned = re.sub(r"^(remind\s+me\s+(to\s+)?|reminder\s+(to\s+)?)", "", text, flags=re.IGNORECASE).strip()
 
-    # Try to parse a date/time from the text
-    parsed_dt = dateparser.parse(
-        text,
-        settings={
-            "PREFER_DATES_FROM": "future",
-            "RELATIVE_BASE": datetime.now(),
-            "RETURN_AS_TIMEZONE_AWARE": False,
-        },
-    )
+    settings = {
+        "PREFER_DATES_FROM": "future",
+        "RELATIVE_BASE": datetime.now(),
+        "RETURN_AS_TIMEZONE_AWARE": False,
+    }
+
+    # First try dateparser.search to find dates within longer text
+    search_results = dateparser.search.search_dates(text, settings=settings)
+
+    parsed_dt = None
+    matched_text = ""
+
+    if search_results:
+        # Use the last date found (usually the time part at the end)
+        matched_text, parsed_dt = search_results[-1]
+    else:
+        # Fallback: try parsing the whole string
+        parsed_dt = dateparser.parse(text, settings=settings)
 
     if parsed_dt is None:
         return cleaned, None
 
-    # Remove the time-related part from the text to get the reminder description
-    # Try common patterns to extract just the task
+    # Remove the matched time text from the cleaned string to get the task
     task = cleaned
-    # Remove trailing time expressions like "in 2 hours", "at 3pm", "tomorrow", etc.
-    time_patterns = [
-        r"\s+in\s+\d+\s+(minute|hour|day|week|month|min|hr)s?\s*$",
-        r"\s+at\s+\d{1,2}(:\d{2})?\s*(am|pm)?\s*$",
-        r"\s+tomorrow\s*(at\s+\d{1,2}(:\d{2})?\s*(am|pm)?)?\s*$",
-        r"\s+today\s*(at\s+\d{1,2}(:\d{2})?\s*(am|pm)?)?\s*$",
-        r"\s+on\s+\w+\s*(at\s+\d{1,2}(:\d{2})?\s*(am|pm)?)?\s*$",
-        r"\s+next\s+\w+\s*(at\s+\d{1,2}(:\d{2})?\s*(am|pm)?)?\s*$",
-        r"\s+after\s+\d+\s+(minute|hour|day|week|month|min|hr)s?\s*$",
-    ]
-    for pattern in time_patterns:
-        task = re.sub(pattern, "", task, flags=re.IGNORECASE).strip()
+    if matched_text:
+        # Remove the matched date/time phrase from the task
+        task = cleaned.replace(matched_text, "").strip()
+        # Clean up leftover prepositions and whitespace
+        task = re.sub(r"\s+(at|on|in|by|before|after|for)\s*$", "", task, flags=re.IGNORECASE).strip()
+        task = re.sub(r"^\s*(at|on|in|by|before|after|for)\s+", "", task, flags=re.IGNORECASE).strip()
 
     if not task:
         task = cleaned
