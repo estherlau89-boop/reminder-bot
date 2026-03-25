@@ -91,6 +91,39 @@ async def cancel_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+def extract_time_phrase(text: str) -> tuple[str, str]:
+    """Split text into (task, time_phrase) by matching common time expressions."""
+    # Patterns that match time expressions, ordered from most specific to least
+    time_patterns = [
+        r"(in\s+\d+\s+(?:minute|hour|day|week|month|min|hr|sec|second)s?)",
+        r"((?:today|tomorrow|tonight)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+        r"((?:today|tomorrow|tonight))",
+        r"((?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+        r"((?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))",
+        r"(at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
+        r"(at\s+\d{1,2}(?::\d{2})?)",
+        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))",
+        r"(after\s+\d+\s+(?:minute|hour|day|week|month|min|hr|sec|second)s?)",
+        r"(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})",
+        r"(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2})",
+    ]
+
+    text_lower = text.lower()
+    for pattern in time_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            time_str = match.group(1)
+            start, end = match.start(1), match.end(1)
+            # Get the task part (everything except the time phrase)
+            task = (text[:start] + text[end:]).strip()
+            # Clean up leftover prepositions
+            task = re.sub(r"\s+(at|on|in|by|before|after|for)\s*$", "", task, flags=re.IGNORECASE).strip()
+            task = re.sub(r"^\s*(at|on|in|by|before|after|for)\s+", "", task, flags=re.IGNORECASE).strip()
+            return task, time_str
+
+    return text, text
+
+
 def parse_reminder(text: str) -> tuple[str, datetime | None]:
     """Extract a reminder description and a future time from natural language text."""
     # Strip common prefixes
@@ -102,30 +135,24 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
         "RETURN_AS_TIMEZONE_AWARE": False,
     }
 
-    # First try dateparser.search to find dates within longer text
-    search_results = dateparser.search.search_dates(text, settings=settings)
+    # Extract the time phrase from the text
+    task, time_phrase = extract_time_phrase(cleaned)
 
-    parsed_dt = None
-    matched_text = ""
+    # Parse the time phrase
+    parsed_dt = dateparser.parse(time_phrase, settings=settings)
 
-    if search_results:
-        # Use the last date found (usually the time part at the end)
-        matched_text, parsed_dt = search_results[-1]
-    else:
-        # Fallback: try parsing the whole string
+    # If that fails, try parsing the whole cleaned text
+    if parsed_dt is None:
+        parsed_dt = dateparser.parse(cleaned, settings=settings)
+        task = cleaned
+
+    # Last resort: try the original text
+    if parsed_dt is None:
         parsed_dt = dateparser.parse(text, settings=settings)
+        task = cleaned
 
     if parsed_dt is None:
         return cleaned, None
-
-    # Remove the matched time text from the cleaned string to get the task
-    task = cleaned
-    if matched_text:
-        # Remove the matched date/time phrase from the task
-        task = cleaned.replace(matched_text, "").strip()
-        # Clean up leftover prepositions and whitespace
-        task = re.sub(r"\s+(at|on|in|by|before|after|for)\s*$", "", task, flags=re.IGNORECASE).strip()
-        task = re.sub(r"^\s*(at|on|in|by|before|after|for)\s+", "", task, flags=re.IGNORECASE).strip()
 
     if not task:
         task = cleaned
