@@ -168,7 +168,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    task, remind_at = parse_reminder(text)
+    try:
+        task, remind_at = parse_reminder(text)
+    except Exception as e:
+        logger.exception("Error parsing reminder: %s", text)
+        await update.message.reply_text(
+            f"Error parsing your message: {e}",
+            message_thread_id=update.message.message_thread_id,
+        )
+        return
+
+    logger.info("Parsed '%s' -> task='%s', remind_at=%s", text, task, remind_at)
 
     if remind_at is None:
         await update.message.reply_text(
