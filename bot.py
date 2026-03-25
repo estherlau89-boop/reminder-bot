@@ -95,43 +95,50 @@ async def cancel_reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-def extract_time_phrase(text: str) -> tuple[str, str]:
+def extract_time_and_task(text: str) -> tuple[str, str]:
     """Split text into (task, time_phrase) by matching common time expressions."""
-    # Patterns that match time expressions, ordered from most specific to least
+    # Patterns ordered from most specific to least — match the TIME part
     time_patterns = [
-        r"(in\s+\d+\s+(?:minute|hour|day|week|month|min|hr|sec|second)s?)",
-        r"((?:today|tomorrow|tonight)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
-        r"((?:today|tomorrow|tonight))",
-        r"((?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
-        r"((?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))",
-        r"(at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)",
-        r"(at\s+\d{1,2}(?::\d{2})?)",
-        r"(\d{1,2}(?::\d{2})?\s*(?:am|pm))",
-        r"(after\s+\d+\s+(?:minute|hour|day|week|month|min|hr|sec|second)s?)",
-        r"(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2})",
-        r"(\d{1,2}/\d{1,2}/\d{2,4}\s+\d{1,2}:\d{2})",
+        # "in 2 hours", "in 30 minutes", "in 1 min"
+        (r"(?:^|\s)(in\s+\d+\s+(?:minutes?|hours?|days?|weeks?|months?|mins?|hrs?|seconds?|secs?))\s*\.?$", True),
+        # "tomorrow at 3pm", "today at 5pm"
+        (r"(?:^|\s)((?:today|tomorrow|tonight)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?)(?:\s*\.?$|\s)", True),
+        # "next monday at 3pm"
+        (r"(?:^|\s)((?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?:\s+at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)?)(?:\s*\.?$|\s)", True),
+        # "at 5pm", "at 3:30 pm", "at 17:00"
+        (r"(?:^|\s)(at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?:\s*\.?$|\s)", True),
+        # "at 17:00" (24h format)
+        (r"(?:^|\s)(at\s+\d{1,2}:\d{2})(?:\s*\.?$|\s)", True),
+        # "6pm", "3:30pm"  (standalone)
+        (r"(?:^|\s)(\d{1,2}(?::\d{2})?\s*(?:am|pm))(?:\s*\.?$|\s)", True),
+        # "in 2 hours" in the middle of text
+        (r"\s(in\s+\d+\s+(?:minutes?|hours?|days?|weeks?|months?|mins?|hrs?|seconds?|secs?))\s", False),
+        # "after 30 minutes"
+        (r"(?:^|\s)(after\s+\d+\s+(?:minutes?|hours?|days?|weeks?|months?|mins?|hrs?|seconds?|secs?))(?:\s*\.?$|\s)", True),
     ]
 
-    text_lower = text.lower()
-    for pattern in time_patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
+    for pattern, _ in time_patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
         if match:
-            time_str = match.group(1)
-            start, end = match.start(1), match.end(1)
-            # Get the task part (everything except the time phrase)
-            task = (text[:start] + text[end:]).strip()
-            # Clean up leftover prepositions
+            time_str = match.group(1).strip()
+            # Remove the time phrase from text to get the task
+            task = text[:match.start(1)] + text[match.end(1):]
+            # Clean up
+            task = re.sub(r"\s+", " ", task).strip()
+            task = re.sub(r"^[\s,.\-]+|[\s,.\-]+$", "", task)
             task = re.sub(r"\s+(at|on|in|by|before|after|for)\s*$", "", task, flags=re.IGNORECASE).strip()
-            task = re.sub(r"^\s*(at|on|in|by|before|after|for)\s+", "", task, flags=re.IGNORECASE).strip()
-            return task, time_str
+            if task:
+                return task, time_str
 
-    return text, text
+    return text, ""
 
 
 def parse_reminder(text: str) -> tuple[str, datetime | None]:
     """Extract a reminder description and a future time from natural language text."""
     # Strip common prefixes
-    cleaned = re.sub(r"^(remind\s+me\s+(to\s+)?|reminder\s+(to\s+)?)", "", text, flags=re.IGNORECASE).strip()
+    cleaned = re.sub(r"^(remind\s+me\s+(to\s+)?|reminder\s+(to\s+)?|pls\s+|please\s+)", "", text, flags=re.IGNORECASE).strip()
+    # Also strip trailing filler
+    cleaned = re.sub(r"\s*\.?\s*$", "", cleaned).strip()
 
     now_user = datetime.now(USER_TZ).replace(tzinfo=None)
     settings = {
@@ -141,20 +148,22 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
     }
 
     # Extract the time phrase from the text
-    task, time_phrase = extract_time_phrase(cleaned)
+    task, time_phrase = extract_time_and_task(cleaned)
+    logger.info("Extracted task='%s', time_phrase='%s' from '%s'", task, time_phrase, cleaned)
 
-    # Parse the time phrase
-    parsed_dt = dateparser.parse(time_phrase, settings=settings)
+    parsed_dt = None
 
-    # If that fails, try parsing the whole cleaned text
+    # Parse the extracted time phrase
+    if time_phrase:
+        parsed_dt = dateparser.parse(time_phrase, settings=settings)
+        logger.info("dateparser('%s') -> %s", time_phrase, parsed_dt)
+
+    # Fallback: try parsing the whole cleaned text
     if parsed_dt is None:
         parsed_dt = dateparser.parse(cleaned, settings=settings)
-        task = cleaned
-
-    # Last resort: try the original text
-    if parsed_dt is None:
-        parsed_dt = dateparser.parse(text, settings=settings)
-        task = cleaned
+        logger.info("dateparser fallback('%s') -> %s", cleaned, parsed_dt)
+        if parsed_dt is not None:
+            task = cleaned
 
     if parsed_dt is None:
         return cleaned, None
@@ -165,6 +174,8 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
     # Parsed time is in user's local timezone, convert to UTC for storage
     parsed_local = parsed_dt.replace(tzinfo=USER_TZ)
     parsed_utc = parsed_local.astimezone(timezone.utc)
+
+    logger.info("Final: task='%s', local=%s, utc=%s", task, parsed_local, parsed_utc)
 
     return task, parsed_utc
 
