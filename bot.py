@@ -1,9 +1,13 @@
 import logging
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 import dateparser
+
+# Default timezone offset for the user (GMT+7)
+USER_TZ_OFFSET = timedelta(hours=int(os.getenv("TZ_OFFSET_HOURS", "7")))
+USER_TZ = timezone(USER_TZ_OFFSET)
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import (
@@ -129,9 +133,10 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
     # Strip common prefixes
     cleaned = re.sub(r"^(remind\s+me\s+(to\s+)?|reminder\s+(to\s+)?)", "", text, flags=re.IGNORECASE).strip()
 
+    now_user = datetime.now(USER_TZ).replace(tzinfo=None)
     settings = {
         "PREFER_DATES_FROM": "future",
-        "RELATIVE_BASE": datetime.now(),
+        "RELATIVE_BASE": now_user,
         "RETURN_AS_TIMEZONE_AWARE": False,
     }
 
@@ -157,8 +162,9 @@ def parse_reminder(text: str) -> tuple[str, datetime | None]:
     if not task:
         task = cleaned
 
-    # Convert to UTC for storage
-    parsed_utc = parsed_dt.astimezone(timezone.utc) if parsed_dt.tzinfo else parsed_dt.replace(tzinfo=timezone.utc)
+    # Parsed time is in user's local timezone, convert to UTC for storage
+    parsed_local = parsed_dt.replace(tzinfo=USER_TZ)
+    parsed_utc = parsed_local.astimezone(timezone.utc)
 
     return task, parsed_utc
 
@@ -201,9 +207,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reminder_id = add_reminder(chat_id, thread_id, task, remind_at)
 
+    # Show time in user's local timezone
+    local_time = remind_at.astimezone(USER_TZ)
+
     await update.message.reply_text(
         f"Got it! I'll remind you to: {task}\n"
-        f"When: {remind_at.strftime('%Y-%m-%d %H:%M UTC')}\n"
+        f"When: {local_time.strftime('%Y-%m-%d %I:%M %p')} (GMT+7)\n"
         f"ID: [{reminder_id}]",
         message_thread_id=thread_id,
     )
