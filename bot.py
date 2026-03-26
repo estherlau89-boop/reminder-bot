@@ -9,16 +9,18 @@ import dateparser
 USER_TZ_OFFSET = timedelta(hours=int(os.getenv("TZ_OFFSET_HOURS", "7")))
 USER_TZ = timezone(USER_TZ_OFFSET)
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
     filters,
 )
 
-from database import add_reminder, delete_reminder, get_pending_reminders, get_user_reminders, init_db, mark_sent
+from database import add_reminder, delete_reminder, get_pending_reminders, get_user_reminders, init_db, init_memorize_db, mark_sent
+import memorize
 
 load_dotenv()
 
@@ -32,15 +34,20 @@ if not BOT_TOKEN:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I'm your reminder bot.\n\n"
-        "Just send me a message like:\n"
+        "Hi! I'm your reminder & Bible memorization bot.\n\n"
+        "📝 *Reminders* — just send me a message like:\n"
         '  "remind me to buy milk in 2 hours"\n'
-        '  "call mom tomorrow at 3pm"\n'
-        '  "meeting in 30 minutes"\n\n'
-        "Commands:\n"
-        "/list - see your upcoming reminders\n"
+        '  "call mom tomorrow at 3pm"\n\n'
+        "📖 *Bible Memorization*\n"
+        "/memorize - add verses to study\n"
+        "/review - review due verses\n"
+        "/progress - see your stats\n"
+        "/verse Romans 8:37 - look up a verse\n\n"
+        "📋 *Reminders*\n"
+        "/list - see upcoming reminders\n"
         "/cancel <id> - cancel a reminder",
         message_thread_id=update.message.message_thread_id,
+        parse_mode="Markdown",
     )
 
 
@@ -185,6 +192,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
+    # Check if user is in a typing quiz session first
+    if await memorize.handle_typed_verse(update, context):
+        return
+
     try:
         task, remind_at = parse_reminder(text)
     except Exception as e:
@@ -244,18 +255,48 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
             logger.exception("Failed to send reminder %d", r["id"])
 
 
+async def post_init(app: Application):
+    """Set bot commands after startup."""
+    await app.bot.set_my_commands([
+        BotCommand("start", "Welcome message"),
+        BotCommand("list", "See upcoming reminders"),
+        BotCommand("cancel", "Cancel a reminder"),
+        BotCommand("memorize", "Add Bible verses to memorize"),
+        BotCommand("review", "Review due verses"),
+        BotCommand("quiz", "Start a quiz session"),
+        BotCommand("progress", "Check memorization progress"),
+        BotCommand("verse", "Look up a verse"),
+    ])
+
+
 def main():
     init_db()
+    init_memorize_db()
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
+    # Reminder commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("list", list_reminders))
     app.add_handler(CommandHandler("cancel", cancel_reminder))
+
+    # Memorization commands
+    app.add_handler(CommandHandler("memorize", memorize.memorize_command))
+    app.add_handler(CommandHandler("review", memorize.review_command))
+    app.add_handler(CommandHandler("quiz", memorize.review_command))
+    app.add_handler(CommandHandler("progress", memorize.progress_command))
+    app.add_handler(CommandHandler("verse", memorize.verse_command))
+
+    # Callback handler for inline keyboards (memorization)
+    app.add_handler(CallbackQueryHandler(memorize.callback_handler))
+
+    # Text message handler (reminders + typed verse answers)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     # Check for due reminders every 30 seconds
     app.job_queue.run_repeating(check_reminders, interval=30, first=5)
+    # Check for due verse reviews every 60 seconds
+    app.job_queue.run_repeating(memorize.check_due_reviews, interval=60, first=15)
 
     logger.info("Bot started")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
