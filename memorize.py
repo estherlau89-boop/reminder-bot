@@ -15,6 +15,11 @@ from verses import REVELATION_CHAPTERS, THEMES, VERSES
 
 logger = logging.getLogger(__name__)
 
+
+def html_escape(text: str) -> str:
+    """Escape text for Telegram HTML parse mode."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 # ── Quiz session state (in-memory, lost on restart) ──────────────────────
 
 @dataclass
@@ -190,17 +195,19 @@ def format_card_message(card: dict, show_answer: bool = False) -> tuple[str, Inl
     if card["theme"]:
         theme_label = f" | {card['theme'].title()}"
 
+    safe_text = html_escape(text)
+    safe_ref = html_escape(ref)
+
     if show_answer:
-        msg = f"📖 *{ref}*{theme_label}\n\n_{text}_"
+        msg = f"📖 <b>{safe_ref}</b>{html_escape(theme_label)}\n\n<i>{safe_text}</i>"
         keyboard = [[InlineKeyboardButton("▶️ Next", callback_data=f"m:{card_id}:n:0")]]
         return msg, InlineKeyboardMarkup(keyboard)
 
     if level == 0:
-        # Full text — read and self-rate
         msg = (
-            f"📖 *{ref}*{theme_label}\n"
+            f"📖 <b>{safe_ref}</b>{html_escape(theme_label)}\n"
             f"📊 Level: Learning\n\n"
-            f"_{text}_\n\n"
+            f"<i>{safe_text}</i>\n\n"
             f"How well do you know this verse?"
         )
         keyboard = [
@@ -214,12 +221,11 @@ def format_card_message(card: dict, show_answer: bool = False) -> tuple[str, Inl
         ]
 
     elif level == 1:
-        # First letter hints
-        hint = first_letter_hint(text)
+        hint = html_escape(first_letter_hint(text))
         msg = (
-            f"📖 *{ref}*{theme_label}\n"
+            f"📖 <b>{safe_ref}</b>{html_escape(theme_label)}\n"
             f"📊 Level: First Letters\n\n"
-            f"`{hint}`\n\n"
+            f"<code>{hint}</code>\n\n"
             f"Can you fill in the words?"
         )
         keyboard = [
@@ -237,13 +243,13 @@ def format_card_message(card: dict, show_answer: bool = False) -> tuple[str, Inl
         ]
 
     elif level == 2:
-        # Fill in the blank
         blanked, removed = fill_in_blank(text)
+        spoiler = html_escape(', '.join(removed))
         msg = (
-            f"📖 *{ref}*{theme_label}\n"
+            f"📖 <b>{safe_ref}</b>{html_escape(theme_label)}\n"
             f"📊 Level: Fill in the Blanks\n\n"
-            f"`{blanked}`\n\n"
-            f"Missing words: ||{', '.join(removed)}||\n"
+            f"<code>{html_escape(blanked)}</code>\n\n"
+            f"Missing words: <tg-spoiler>{spoiler}</tg-spoiler>\n"
             f"(Tap the spoiler above to peek)"
         )
         keyboard = [
@@ -261,10 +267,10 @@ def format_card_message(card: dict, show_answer: bool = False) -> tuple[str, Inl
         ]
 
     else:  # level >= 3
-        # Reference only — recite from memory
+        level_name = "Mastered ⭐" if level >= 4 else "From Memory"
         msg = (
-            f"📖 *{ref}*{theme_label}\n"
-            f"📊 Level: {'Mastered ⭐' if level >= 4 else 'From Memory'}\n\n"
+            f"📖 <b>{safe_ref}</b>{html_escape(theme_label)}\n"
+            f"📊 Level: {level_name}\n\n"
             f"Can you recite this verse from memory?\n"
             f"Take a moment, then rate yourself:"
         )
@@ -301,9 +307,9 @@ async def memorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if full_text in VERSES:
             added = db.add_verse_card(user_id, full_text)
             if added:
-                await update.message.reply_text(f"✅ Added *{full_text}* to your memorization list!", parse_mode="Markdown")
+                await update.message.reply_text(f"✅ Added <b>{html_escape(full_text)}</b> to your memorization list!", parse_mode="HTML")
             else:
-                await update.message.reply_text(f"You're already memorizing *{full_text}*!", parse_mode="Markdown")
+                await update.message.reply_text(f"You're already memorizing <b>{html_escape(full_text)}</b>!", parse_mode="HTML")
             return
 
         # Check for theme
@@ -311,10 +317,10 @@ async def memorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             refs = THEMES[arg]
             count = db.add_bulk_cards(user_id, refs, theme=arg)
             await update.message.reply_text(
-                f"✅ Added *{count}* new verses from *{arg.title()}* theme!\n"
+                f"✅ Added <b>{count}</b> new verses from <b>{arg.title()}</b> theme!\n"
                 f"({len(refs) - count} already in your list)\n\n"
                 f"Use /review to start studying!",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             return
 
@@ -327,10 +333,10 @@ async def memorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 theme = f"revelation_ch{ch}"
                 count = db.add_bulk_cards(user_id, refs, theme=theme)
                 await update.message.reply_text(
-                    f"✅ Added *{count}* new verses from *Revelation {ch}*!\n"
+                    f"✅ Added <b>{count}</b> new verses from <b>Revelation {ch}</b>!\n"
                     f"({len(refs) - count} already in your list)\n\n"
                     f"Use /review to start studying!",
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                 )
                 return
 
@@ -357,10 +363,10 @@ async def memorize_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("📖 All Revelation (404 verses)", callback_data="mr:all")])
 
     await update.message.reply_text(
-        "📚 *Choose what to memorize:*\n\n"
+        "📚 <b>Choose what to memorize:</b>\n\n"
         "Pick a theme or Revelation chapter to add to your study list.",
         reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -388,9 +394,9 @@ async def review_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     active_sessions[user_id] = session
 
     await update.message.reply_text(
-        f"📚 *Review Session*\n"
+        f"📚 <b>Review Session</b>\n"
         f"{len(cards)} verses to review. Let's go!\n",
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
     # Send first card
@@ -412,7 +418,7 @@ async def send_current_card(chat_id: int, user_id: int, context: ContextTypes.DE
         chat_id=chat_id,
         text=f"({session.current_index + 1}/{session.total}) " + msg,
         reply_markup=keyboard,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
@@ -430,14 +436,14 @@ async def send_session_summary(chat_id: int, user_id: int, context: ContextTypes
     progress = db.get_user_progress(user_id)
 
     msg = (
-        f"🏁 *Review Complete!*\n\n"
+        f"🏁 <b>Review Complete!</b>\n\n"
         f"Score: {correct}/{total} ({pct}%)\n"
         f"{'🌟 Excellent!' if pct >= 80 else '💪 Keep going!' if pct >= 50 else '📖 More practice needed!'}\n\n"
         f"📊 Total verses: {progress['total']} | Mastered: {progress['mastered']} | Due: {progress['due']}"
     )
 
     del active_sessions[user_id]
-    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="Markdown")
+    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode="HTML")
 
 
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -449,7 +455,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("You haven't started memorizing yet! Use /memorize to begin.")
         return
 
-    lines = ["📊 *Your Memorization Progress*\n"]
+    lines = ["📊 <b>Your Memorization Progress</b>\n"]
 
     # Theme progress
     for theme in THEMES:
@@ -458,8 +464,8 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bar_len = 10
             filled = int(tp["mastered"] / tp["total"] * bar_len) if tp["total"] > 0 else 0
             bar = "█" * filled + "░" * (bar_len - filled)
-            lines.append(f"*{theme.title()}*: {tp['mastered']}/{tp['total']} mastered")
-            lines.append(f"`[{bar}]` {tp['learning']} learning\n")
+            lines.append(f"<b>{theme.title()}</b>: {tp['mastered']}/{tp['total']} mastered")
+            lines.append(f"<code>[{bar}]</code> {tp['learning']} learning\n")
 
     # Revelation progress
     rev_lines = []
@@ -474,13 +480,13 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             rev_lines.append(f"Ch {ch}: {status}")
 
     if rev_lines:
-        lines.append(f"*Revelation*: {rev_mastered}/{rev_total} mastered")
+        lines.append(f"<b>Revelation</b>: {rev_mastered}/{rev_total} mastered")
         lines.append(", ".join(rev_lines) + "\n")
 
     # Overall
-    lines.append(f"*Overall*: {overall['total']} verses | {overall['mastered']} mastered | {overall['due']} due now")
+    lines.append(f"<b>Overall</b>: {overall['total']} verses | {overall['mastered']} mastered | {overall['due']} due now")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n".join(lines), parse_mode="HTML")
 
 
 async def verse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -495,7 +501,7 @@ async def verse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref = " ".join(context.args).strip()
     text = VERSES.get(ref)
     if text:
-        await update.message.reply_text(f"📖 *{ref}*\n\n_{text}_", parse_mode="Markdown")
+        await update.message.reply_text(f"📖 <b>{html_escape(ref)}</b>\n\n<i>{html_escape(text)}</i>", parse_mode="HTML")
     else:
         # Try fuzzy match
         matches = [r for r in VERSES if ref.lower() in r.lower()]
@@ -503,7 +509,7 @@ async def verse_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             suggestions = "\n".join(f"• {m}" for m in matches[:5])
             await update.message.reply_text(f"Verse not found. Did you mean:\n{suggestions}")
         else:
-            await update.message.reply_text(f"Verse *{ref}* not found in the database.", parse_mode="Markdown")
+            await update.message.reply_text(f"Verse <b>{html_escape(ref)}</b> not found in the database.", parse_mode="HTML")
 
 
 # ── Callback handler ─────────────────────────────────────────────────────
@@ -524,10 +530,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if refs:
             count = db.add_bulk_cards(user_id, refs, theme=theme)
             await query.edit_message_text(
-                f"✅ Added *{count}* new verses from *{theme.title()}*!\n"
+                f"✅ Added <b>{count}</b> new verses from <b>{theme.title()}</b>!\n"
                 f"({len(refs) - count} already in your list)\n\n"
                 f"Use /review to start studying!",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         return
 
@@ -539,9 +545,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 refs = REVELATION_CHAPTERS[ch]
                 total_added += db.add_bulk_cards(user_id, refs, theme=f"revelation_ch{ch}")
             await query.edit_message_text(
-                f"✅ Added *{total_added}* new Revelation verses!\n\n"
+                f"✅ Added <b>{total_added}</b> new Revelation verses!\n\n"
                 f"Use /review to start studying!",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         else:
             ch = int(ch_str)
@@ -549,10 +555,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             theme = f"revelation_ch{ch}"
             count = db.add_bulk_cards(user_id, refs, theme=theme)
             await query.edit_message_text(
-                f"✅ Added *{count}* new verses from *Revelation {ch}*!\n"
+                f"✅ Added <b>{count}</b> new verses from <b>Revelation {ch}</b>!\n"
                 f"({len(refs) - count} already in your list)\n\n"
                 f"Use /review to start studying!",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         return
 
@@ -615,7 +621,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if session:
                 session.hint_used = True
             msg, keyboard = format_card_message(card, show_answer=True)
-            await query.edit_message_text(msg, reply_markup=keyboard, parse_mode="Markdown")
+            await query.edit_message_text(msg, reply_markup=keyboard, parse_mode="HTML")
 
         elif action == "t":
             # Type it out mode
@@ -624,9 +630,9 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session.hint_used = False
             ref = card["verse_ref"]
             await query.edit_message_text(
-                f"⌨️ *Type out {ref}* from memory:\n\n"
+                f"⌨️ <b>Type out {html_escape(ref)}</b> from memory:\n\n"
                 f"(Just type the verse text and send it as a message)",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
 
         elif action == "n":
@@ -684,13 +690,13 @@ async def handle_typed_verse(update: Update, context: ContextTypes.DEFAULT_TYPE)
     grade_emoji = ["💀", "😰", "😐", "🙂", "😄", "🌟"][quality]
 
     msg = (
-        f"{grade_emoji} *{card['verse_ref']}*\n\n"
-        f"{feedback}\n"
+        f"{grade_emoji} <b>{html_escape(card['verse_ref'])}</b>\n\n"
+        f"{html_escape(feedback)}\n"
         f"Next review: {interval_str}{diff_change}\n\n"
-        f"*Actual verse:*\n_{actual_text}_"
+        f"<b>Actual verse:</b>\n<i>{html_escape(actual_text)}</i>"
     )
 
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await update.message.reply_text(msg, parse_mode="HTML")
 
     # Next card
     session.current_index += 1
@@ -734,9 +740,9 @@ async def check_due_reviews(context: ContextTypes.DEFAULT_TYPE):
         try:
             await context.bot.send_message(
                 chat_id=user_id,
-                text=f"📚 You have *{due_count}* verses due for review!\n"
+                text=f"📚 You have <b>{due_count}</b> verses due for review!\n"
                      f"Use /review to start your session.",
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
             last_notification[user_id] = datetime.now(timezone.utc)
         except Exception as e:

@@ -34,20 +34,20 @@ if not BOT_TOKEN:
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I'm your reminder & Bible memorization bot.\n\n"
-        "📝 *Reminders* — just send me a message like:\n"
+        "Hi! I'm your reminder &amp; Bible memorization bot.\n\n"
+        "📝 <b>Reminders</b> — just send me a message like:\n"
         '  "remind me to buy milk in 2 hours"\n'
         '  "call mom tomorrow at 3pm"\n\n'
-        "📖 *Bible Memorization*\n"
+        "📖 <b>Bible Memorization</b>\n"
         "/memorize - add verses to study\n"
         "/review - review due verses\n"
         "/progress - see your stats\n"
         "/verse Romans 8:37 - look up a verse\n\n"
-        "📋 *Reminders*\n"
+        "📋 <b>Reminders</b>\n"
         "/list - see upcoming reminders\n"
-        "/cancel <id> - cancel a reminder",
+        "/cancel &lt;id&gt; - cancel a reminder",
         message_thread_id=update.message.message_thread_id,
-        parse_mode="Markdown",
+        parse_mode="HTML",
     )
 
 
