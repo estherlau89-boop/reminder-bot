@@ -20,7 +20,9 @@ from telegram.ext import (
 )
 
 from database import add_reminder, delete_reminder, get_pending_reminders, get_user_reminders, init_db, init_memorize_db, mark_sent
+from database import init_exam_db
 import memorize
+import exam
 
 load_dotenv()
 
@@ -43,6 +45,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/review - review due verses\n"
         "/progress - see your stats\n"
         "/verse Romans 8:37 - look up a verse\n\n"
+        "📝 <b>Exam Practice</b>\n"
+        "/exam - exam menu\n"
+        "/addq - add questions\n"
+        "/test - test yourself\n"
+        "/scores - view past scores\n\n"
         "📋 <b>Reminders</b>\n"
         "/list - see upcoming reminders\n"
         "/cancel &lt;id&gt; - cancel a reminder",
@@ -192,7 +199,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         return
 
-    # Check if user is in a typing quiz session first
+    # Check if user is in an exam session or adding questions first
+    if await exam.handle_exam_text(update, context):
+        return
+
+    # Check if user is in a typing quiz session
     if await memorize.handle_typed_verse(update, context):
         return
 
@@ -266,12 +277,18 @@ async def post_init(app: Application):
         BotCommand("quiz", "Start a quiz session"),
         BotCommand("progress", "Check memorization progress"),
         BotCommand("verse", "Look up a verse"),
+        BotCommand("exam", "Exam practice menu"),
+        BotCommand("addq", "Add exam questions"),
+        BotCommand("test", "Start an exam test"),
+        BotCommand("scores", "View exam scores"),
+        BotCommand("done", "Finish adding questions"),
     ])
 
 
 def main():
     init_db()
     init_memorize_db()
+    init_exam_db()
 
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
@@ -287,7 +304,15 @@ def main():
     app.add_handler(CommandHandler("progress", memorize.progress_command))
     app.add_handler(CommandHandler("verse", memorize.verse_command))
 
-    # Callback handler for inline keyboards (memorization)
+    # Exam commands
+    app.add_handler(CommandHandler("exam", exam.exam_command))
+    app.add_handler(CommandHandler("addq", exam.addq_command))
+    app.add_handler(CommandHandler("test", exam.test_command))
+    app.add_handler(CommandHandler("scores", exam.scores_command))
+    app.add_handler(CommandHandler("done", exam.done_command))
+
+    # Callback handlers for inline keyboards
+    app.add_handler(CallbackQueryHandler(exam.exam_callback_handler, pattern=r"^e[xt]:"))
     app.add_handler(CallbackQueryHandler(memorize.callback_handler))
 
     # Text message handler (reminders + typed verse answers)

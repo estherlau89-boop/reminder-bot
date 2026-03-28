@@ -258,3 +258,149 @@ def get_all_user_cards(user_id: int) -> list[dict]:
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
+
+
+# --------------- Exam tables ---------------
+
+def init_exam_db():
+    conn = get_connection()
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exam_sets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            UNIQUE(user_id, name)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exam_questions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            set_id INTEGER NOT NULL,
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            times_tested INTEGER NOT NULL DEFAULT 0,
+            times_correct INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (set_id) REFERENCES exam_sets(id)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS exam_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            set_id INTEGER NOT NULL,
+            total INTEGER NOT NULL,
+            correct INTEGER NOT NULL,
+            taken_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+def create_exam_set(user_id: int, name: str) -> int:
+    """Create an exam set. Returns set id."""
+    conn = get_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO exam_sets (user_id, name) VALUES (?, ?)",
+            (user_id, name),
+        )
+        conn.commit()
+        return cursor.lastrowid
+    except sqlite3.IntegrityError:
+        row = conn.execute(
+            "SELECT id FROM exam_sets WHERE user_id=? AND name=?", (user_id, name)
+        ).fetchone()
+        return row["id"]
+    finally:
+        conn.close()
+
+
+def add_exam_question(set_id: int, question: str, answer: str) -> int:
+    conn = get_connection()
+    cursor = conn.execute(
+        "INSERT INTO exam_questions (set_id, question, answer) VALUES (?, ?, ?)",
+        (set_id, question, answer),
+    )
+    qid = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return qid
+
+
+def get_exam_sets(user_id: int) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        """SELECT s.*, COUNT(q.id) as question_count
+           FROM exam_sets s LEFT JOIN exam_questions q ON s.id = q.set_id
+           WHERE s.user_id=? GROUP BY s.id ORDER BY s.name""",
+        (user_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_exam_questions(set_id: int) -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        "SELECT * FROM exam_questions WHERE set_id=? ORDER BY id", (set_id,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_exam_question_by_id(qid: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM exam_questions WHERE id=?", (qid,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def update_question_stats(qid: int, correct: bool):
+    conn = get_connection()
+    if correct:
+        conn.execute(
+            "UPDATE exam_questions SET times_tested=times_tested+1, times_correct=times_correct+1 WHERE id=?",
+            (qid,),
+        )
+    else:
+        conn.execute(
+            "UPDATE exam_questions SET times_tested=times_tested+1 WHERE id=?",
+            (qid,),
+        )
+    conn.commit()
+    conn.close()
+
+
+def save_exam_result(user_id: int, set_id: int, total: int, correct: int):
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO exam_results (user_id, set_id, total, correct) VALUES (?, ?, ?, ?)",
+        (user_id, set_id, total, correct),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_exam_set_by_id(set_id: int) -> dict | None:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM exam_sets WHERE id=?", (set_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def delete_exam_set(set_id: int):
+    conn = get_connection()
+    conn.execute("DELETE FROM exam_questions WHERE set_id=?", (set_id,))
+    conn.execute("DELETE FROM exam_results WHERE set_id=?", (set_id,))
+    conn.execute("DELETE FROM exam_sets WHERE id=?", (set_id,))
+    conn.commit()
+    conn.close()
+
+
+def delete_exam_question(qid: int):
+    conn = get_connection()
+    conn.execute("DELETE FROM exam_questions WHERE id=?", (qid,))
+    conn.commit()
+    conn.close()
